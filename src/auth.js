@@ -74,6 +74,11 @@ export class AuthManager {
     if (authHeader) {
       headers['Authorization'] = authHeader;
     }
+
+    if(Liferay.authToken) {
+      headers['x-csrf-token'] = Liferay.authToken;
+    }
+
     return headers;
   }
 }

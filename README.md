@@ -51,7 +51,7 @@ const client = new LiferayHeadlessClient({
 await client.init();
 
 // Call generated methods
-const { data: sites } = await client.headlessDelivery.getSites();
+const { data: sites } = await client.headlessDelivery.site.getSites();
 console.log(sites.items);
 ```
 
@@ -142,17 +142,16 @@ After `init()`, service namespaces are accessible as properties of the client. T
 ```js
 await client.init();
 
-// GET /sites
-const { data } = await client.headlessDelivery.getSites();
+// GET /v1.0/sites/{siteId}
+const { data } = await client.headlessDelivery.site.getSite({siteId: 12345});
 
-// GET /sites/{siteId}/structured-contents
-const { data: contents } = await client.headlessDelivery.getStructuredContents({
-  siteId: 12345,
-  pageSize: 10,
+// GET /v1.0/structured-contents/{structuredContentId}
+const { data: contents } = await client.headlessDelivery.structuredContent.getStructuredContent({
+  structuredContentId: 999,
 });
 
-// POST — create structured content
-await client.headlessDelivery.createStructuredContent({
+// POST /v1.0/sites/{siteId}/structured-contents
+await client.headlessDelivery.structuredContent.postSiteStructuredContent({
   siteId: 12345,
   body: {
     title: 'My Article',
@@ -161,14 +160,14 @@ await client.headlessDelivery.createStructuredContent({
   },
 });
 
-// PUT — update
-await client.headlessDelivery.putStructuredContent({
+// PUT /v1.0/structured-contents/{structuredContentId}
+await client.headlessDelivery.structuredContent.putStructuredContent({
   structuredContentId: 999,
   body: { title: 'Updated Title' },
 });
 
-// DELETE
-await client.headlessDelivery.deleteStructuredContent({
+// DELETE /v1.0/structured-contents/{structuredContentId}
+await client.headlessDelivery.structuredContent.deleteStructuredContent({
   structuredContentId: 999,
 });
 ```

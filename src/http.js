@@ -72,8 +72,8 @@ export class HttpClient {
 
     // Build URL
     const qs = buildQueryString(query);
-    const fullPath = qs ? `${path}?${qs}` : path;
-    const url = joinUrl(this.baseUrl, fullPath);
+    const url = qs ? `${path}?${qs}` : path;
+    // const url = joinUrl(this.baseUrl, fullPath);
 
     // Build headers
     const headers = { ...extraHeaders };

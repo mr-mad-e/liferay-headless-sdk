@@ -41,7 +41,7 @@ export class LiferayHeadlessClient {
    */
   constructor(options = {}) {
     const {
-      baseUrl,
+      baseUrl = '',
       swaggerUrls = [],
       username,
       password,
@@ -51,7 +51,7 @@ export class LiferayHeadlessClient {
       autoGenerate = true,
     } = options;
 
-    if (!baseUrl) throw new Error('[LiferaySDK] baseUrl is required');
+    // if (!baseUrl) throw new Error('[LiferaySDK] baseUrl is required');
 
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this._swaggerUrls = swaggerUrls;
@@ -93,6 +93,7 @@ export class LiferayHeadlessClient {
     const authHeaders = {};
     const authHeader = this._auth.getAuthHeader();
     if (authHeader) authHeaders['Authorization'] = authHeader;
+    if (Liferay.authToken) authHeaders['x-csrf-token'] = Liferay.authToken;
 
     const schemas = await this._loader.loadAll(this._swaggerUrls, this.baseUrl, authHeaders);
 
@@ -114,6 +115,7 @@ export class LiferayHeadlessClient {
     const authHeaders = {};
     const authHeader = this._auth.getAuthHeader();
     if (authHeader) authHeaders['Authorization'] = authHeader;
+    if (Liferay.authToken) authHeaders['x-csrf-token'] = Liferay.authToken;
 
     const schema = await this._loader.load(swaggerUrl, this.baseUrl, authHeaders);
     this._mergeServices(generateServicesFromSchema(schema, this._http), swaggerUrl);

@@ -3,17 +3,17 @@
   "version": "1.0.0",
   "description": "A production-ready JavaScript SDK dynamically generated from Liferay Headless API Swagger/OpenAPI specifications.",
   "type": "module",
-  "main": "./index.js",
-  "module": "./index.js",
-  "types": "./index.d.ts",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./src/index.d.ts",
   "exports": {
     ".": {
-      "import": "./index.js",
-      "types": "./index.d.ts"
+      "import": "./src/index.js",
+      "types": "./src/index.d.ts"
     }
   },
   "bin": {
-    "liferay-sdk-cli": "./cli.js"
+    "liferay-sdk-cli": "./src/cli.js"
   },
   "files": [
     "index.js",

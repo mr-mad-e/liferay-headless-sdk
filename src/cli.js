@@ -97,6 +97,7 @@ async function fetchSchema(url) {
   const authHeader = buildAuthHeader();
   const headers = { Accept: 'application/json' };
   if (authHeader) headers['Authorization'] = authHeader;
+  if (Liferay.authToken) headers['x-csrf-token'] = Liferay.authToken;
 
   const response = await fetch(url, { headers });
   if (!response.ok) {

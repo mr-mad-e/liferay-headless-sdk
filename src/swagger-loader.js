@@ -90,20 +90,21 @@ export class SwaggerLoader {
    * @returns {Promise<Array<{ url: string, schema: object }>>}
    */
   async loadAll(schemaUrls, baseUrl, authHeaders = {}) {
-    const results = await Promise.allSettled(
-      schemaUrls.map(async (url) => ({
-        url,
-        schema: await this.load(url, baseUrl, authHeaders),
-      }))
-    );
+    // const results = await Promise.allSettled(
+    //   schemaUrls.map(async (url) => ({
+    //     url,
+    //     schema: await this.load(url, baseUrl, authHeaders),
+    //   }))
+    // );
 
     const schemas = [];
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        schemas.push(result.value);
-      } else {
-        console.warn(`[LiferaySDK] Failed to load schema: ${result.reason?.message}`);
-      }
+    for (const url of schemaUrls) {
+      // if (result.status === 'fulfilled') {
+        const schema = await this.load(url, baseUrl, authHeaders)
+        schemas.push({schema, url});
+      // } else {
+      //   console.warn(`[LiferaySDK] Failed to load schema: ${result.reason?.message}`);
+      // }
     }
     return schemas;
   }

@@ -51,7 +51,7 @@ export function tagToPropertyName(tag) {
  */
 export function interpolatePath(pathTemplate, params = {}) {
   const remaining = { ...params };
-  const url = pathTemplate.replace(/\{([^}]+)\}/g, (_, key) => {
+  const path = pathTemplate.replace(/\{([^}]+)\}/g, (_, key) => {
     if (key in remaining) {
       const val = remaining[key];
       delete remaining[key];
@@ -59,7 +59,7 @@ export function interpolatePath(pathTemplate, params = {}) {
     }
     return `{${key}}`;
   });
-  return { url, remaining };
+  return { path, remaining };
 }
 
 /**

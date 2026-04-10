@@ -4,7 +4,7 @@
  * path/query/body parameters automatically.
  */
 
-import { operationIdToMethodName, tagToPropertyName, interpolatePath } from './utils.js';
+import { operationIdToMethodName, tagToPropertyName, interpolatePath, joinUrl } from './utils.js';
 
 /** HTTP methods that typically carry a request body */
 const BODY_METHODS = new Set(['post', 'put', 'patch']);
@@ -18,6 +18,7 @@ const BODY_METHODS = new Set(['post', 'put', 'patch']);
 export function parseOperationsByTag(schema) {
   const tagMap = new Map();
   const paths = schema.paths || {};
+  const url = schema.servers[0].url;
 
   for (const [pathTemplate, pathItem] of Object.entries(paths)) {
     for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
@@ -36,6 +37,7 @@ export function parseOperationsByTag(schema) {
       }
 
       tagMap.get(tagKey).push({
+        url,
         method,
         pathTemplate,
         operationId: operation.operationId,
@@ -75,7 +77,7 @@ export function parseOperationsByTag(schema) {
  * @returns {Function}
  */
 export function buildOperationMethod(operation, httpClient) {
-  const { method, pathTemplate, operationId, parameters } = operation;
+  const { url, method, pathTemplate, operationId, parameters } = operation;
 
   // Identify path parameter names
   const pathParamNames = new Set(
@@ -113,7 +115,7 @@ export function buildOperationMethod(operation, httpClient) {
       }
     }
 
-    const { url } = interpolatePath(pathTemplate, pathParams);
+    const { path } = interpolatePath(joinUrl(url, pathTemplate), pathParams);
     const mergedQuery = { ...queryParams, ...extraParams };
 
     // For methods with bodies, use body param; otherwise ignore
@@ -121,7 +123,7 @@ export function buildOperationMethod(operation, httpClient) {
 
     return httpClient.request({
       method: method.toUpperCase(),
-      path: url,
+      path,
       query: mergedQuery,
       body: requestBody,
       headers,
@@ -179,10 +181,11 @@ export function buildServiceModule(operations, httpClient) {
  */
 export function generateServicesFromSchema(schema, httpClient) {
   const tagMap = parseOperationsByTag(schema);
-  const services = {};
+  const service = tagToPropertyName(schema.info.title);
+  const services = {[service]:{}};
 
   for (const [tagKey, operations] of tagMap.entries()) {
-    services[tagKey] = buildServiceModule(operations, httpClient);
+    services[service][tagKey] = buildServiceModule(operations, httpClient);
   }
 
   return services;
