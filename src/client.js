@@ -74,8 +74,8 @@ export class LiferayHeadlessClient {
       this._auth.setOAuthToken(oauthToken);
     } else if (username && password) {
       this._auth.setBasicAuth(username, password);
-    } else if(authToken) {
-      this._auth.setBasicAuth(username, password);
+    } else if (authToken) {
+      this._auth.setAuthToken(authToken);
     }
 
     // Auto-generate: return a Proxy that lazily triggers init on first service access
