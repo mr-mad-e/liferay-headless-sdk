@@ -46,6 +46,7 @@ export class LiferayHeadlessClient {
       username,
       password,
       oauthToken,
+      authToken,
       timeout = 30000,
       retries = 2,
       autoGenerate = true,
@@ -73,6 +74,8 @@ export class LiferayHeadlessClient {
       this._auth.setOAuthToken(oauthToken);
     } else if (username && password) {
       this._auth.setBasicAuth(username, password);
+    } else if(authToken) {
+      this._auth.setBasicAuth(username, password);
     }
 
     // Auto-generate: return a Proxy that lazily triggers init on first service access
@@ -91,10 +94,8 @@ export class LiferayHeadlessClient {
     if (this._initialized) return this;
 
     const authHeaders = {};
-    const authHeader = this._auth.getAuthHeader();
-    if (authHeader) authHeaders['Authorization'] = authHeader;
-    if (Liferay.authToken) authHeaders['x-csrf-token'] = Liferay.authToken;
-
+    this._auth.injectAuthHeaders(authHeaders);
+    
     const schemas = await this._loader.loadAll(this._swaggerUrls, this.baseUrl, authHeaders);
 
     for (const { url, schema } of schemas) {
@@ -113,9 +114,7 @@ export class LiferayHeadlessClient {
    */
   async loadSchema(swaggerUrl) {
     const authHeaders = {};
-    const authHeader = this._auth.getAuthHeader();
-    if (authHeader) authHeaders['Authorization'] = authHeader;
-    if (Liferay.authToken) authHeaders['x-csrf-token'] = Liferay.authToken;
+    this._auth.injectAuthHeaders(authHeaders);
 
     const schema = await this._loader.load(swaggerUrl, this.baseUrl, authHeaders);
     this._mergeServices(generateServicesFromSchema(schema, this._http), swaggerUrl);

@@ -14,6 +14,7 @@ export class AuthManager {
   constructor() {
     /** @type {AuthType | null} */
     this._authType = null;
+    this._authToken = null;
     this._credentials = null;
   }
 
@@ -38,6 +39,10 @@ export class AuthManager {
   setOAuthToken(token) {
     this._authType = 'oauth';
     this._credentials = `Bearer ${token}`;
+  }
+
+  setAuthToken(authToken) {
+    this._authToken = authToken
   }
 
   /**
@@ -75,8 +80,8 @@ export class AuthManager {
       headers['Authorization'] = authHeader;
     }
 
-    if(Liferay.authToken) {
-      headers['x-csrf-token'] = Liferay.authToken;
+    if(this._authToken) {
+      headers['x-csrf-token'] = this._authToken;
     }
 
     return headers;

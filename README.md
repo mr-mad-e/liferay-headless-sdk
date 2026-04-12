@@ -51,7 +51,7 @@ const client = new LiferayHeadlessClient({
 await client.init();
 
 // Call generated methods
-const { data: sites } = await client.headlessDelivery.site.getSites();
+const { data: sites } = await client.headlessAdminUser.site.getMyUserAccountSitesPage();
 console.log(sites.items);
 ```
 
@@ -143,7 +143,7 @@ After `init()`, service namespaces are accessible as properties of the client. T
 await client.init();
 
 // GET /v1.0/sites/{siteId}
-const { data } = await client.headlessDelivery.site.getSite({siteId: 12345});
+const { data } = await client.headlessAdminUser.site.getSite({siteId: 12345});
 
 // GET /v1.0/structured-contents/{structuredContentId}
 const { data: contents } = await client.headlessDelivery.structuredContent.getStructuredContent({
