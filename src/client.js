@@ -43,6 +43,8 @@ export class LiferayHeadlessClient {
     const {
       baseUrl = '',
       swaggerUrls = [],
+      operationIds = [],
+      tags = [],
       username,
       password,
       oauthToken,
@@ -56,6 +58,8 @@ export class LiferayHeadlessClient {
 
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this._swaggerUrls = swaggerUrls;
+    this._operationIds = operationIds;
+    this._tags = tags;
     this._autoGenerate = autoGenerate;
 
     // Sub-modules
@@ -99,7 +103,7 @@ export class LiferayHeadlessClient {
     const schemas = await this._loader.loadAll(this._swaggerUrls, this.baseUrl, authHeaders);
 
     for (const { url, schema } of schemas) {
-      this._mergeServices(generateServicesFromSchema(schema, this._http), url);
+      this._mergeServices(generateServicesFromSchema(schema, this._operationIds, this._tags, this._http), url);
     }
 
     this._initialized = true;
@@ -117,7 +121,7 @@ export class LiferayHeadlessClient {
     this._auth.injectAuthHeaders(authHeaders);
 
     const schema = await this._loader.load(swaggerUrl, this.baseUrl, authHeaders);
-    this._mergeServices(generateServicesFromSchema(schema, this._http), swaggerUrl);
+    this._mergeServices(generateServicesFromSchema(schema, this._operationIds, this._tags, this._http), swaggerUrl);
   }
 
   // ─── Auth ──────────────────────────────────────────────────────────────────

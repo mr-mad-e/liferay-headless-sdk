@@ -7,10 +7,14 @@ export const client = new LiferayHeadlessClient({
     '/o/headless-admin-user/v1.0/openapi.json',
   ],
   username: 'test@liferay.com',
-  password: 'test@liferay.com',
+  password: 'test',
+  // tags: ['Site']
+  // operationIds: ['getMyUserAccountSitesPage']
 });
 
 await client.init();
 
-const { data: sites } = await client.headlessAdminUser.site.getMyUserAccountSitesPage();
-console.log(sites.items);
+// console.log('client', client._services)
+
+const { data } = await client.headlessAdminUser.site.getMyUserAccountSitesPage();
+console.log(data.items);

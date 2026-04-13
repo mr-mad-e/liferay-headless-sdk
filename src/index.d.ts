@@ -37,6 +37,7 @@ export type AuthType = 'basic' | 'oauth';
 export declare class AuthManager {
   setBasicAuth(username: string, password: string): void;
   setOAuthToken(token: string): void;
+  setAuthToken(authToken: string): void;
   clearAuth(): void;
   getAuthHeader(): string | null;
   getAuthType(): AuthType | null;
@@ -97,11 +98,18 @@ export interface OperationDef {
   description: string;
 }
 
-export declare function parseOperationsByTag(schema: object): Map<string, OperationDef[]>;
+export declare function parseOperationsByTag(
+  schema: object,
+  operationIds?: string[],
+  tags?: string[]
+): Map<string, OperationDef[]>;
+
 export declare function generateServicesFromSchema(
   schema: object,
+  operationIds: string[],
+  tags: string[],
   httpClient: HttpClient
-): Record<string, Record<string, ApiMethod>>;
+): Record<string, Record<string, Record<string, ApiMethod>>>;
 
 // ─── API Method ────────────────────────────────────────────────────────────
 
@@ -148,12 +156,18 @@ export interface LiferayClientOptions {
   baseUrl: string;
   /** OpenAPI JSON endpoint paths or absolute URLs to load */
   swaggerUrls?: string[];
+  /** Filter generated methods to specific operation IDs */
+  operationIds?: string[];
+  /** Filter generated methods to specific tag names */
+  tags?: string[];
   /** Username for Basic Auth */
   username?: string;
   /** Password for Basic Auth */
   password?: string;
   /** Bearer token for OAuth2 */
   oauthToken?: string;
+  /** Raw CSRF token — sets x-csrf-token header on every request */
+  authToken?: string;
   /** Request timeout in ms (default 30000) */
   timeout?: number;
   /** Number of retry attempts on transient failures (default 2) */
@@ -164,8 +178,10 @@ export interface LiferayClientOptions {
 
 /**
  * Main Liferay Headless API client.
- * Service namespaces (e.g. `client.headlessDelivery`) are dynamically populated
- * after `init()` is called or lazily on first access when `autoGenerate=true`.
+ *
+ * After `init()`, services are accessible as `client.<namespace>.<tag>.<method>()`.
+ * The namespace is derived from the OpenAPI `info.title` (camelCased);
+ * tags become sub-namespaces within it.
  */
 export declare class LiferayHeadlessClient {
   constructor(options: LiferayClientOptions);
@@ -201,12 +217,15 @@ export declare class LiferayHeadlessClient {
   /** Clear all cached Swagger schemas and reset generated services. */
   clearSchemaCache(): void;
 
-  /** Returns all available service namespace names (derived from tags). */
+  /** Returns all available top-level service namespace names. */
   getServiceNames(): string[];
 
   /** Returns all method names for a given service namespace. */
   getMethodNames(serviceName: string): string[];
 
-  /** Dynamically accessible service namespaces populated at runtime */
-  [service: string]: Record<string, ApiMethod> | unknown;
+  /**
+   * Dynamically accessible service namespaces populated at runtime.
+   * Structure: client[namespace][tag][method]
+   */
+  [namespace: string]: Record<string, Record<string, ApiMethod>> | unknown;
 }

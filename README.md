@@ -1,6 +1,6 @@
 # Liferay Headless SDK
 
-A production-ready JavaScript SDK that **dynamically generates** API client methods from Liferay's Swagger/OpenAPI specifications at runtime. Zero manual mapping required — point it at a Liferay instance and call APIs immediately.
+A JavaScript SDK that **dynamically generates** API client methods from Liferay's Swagger/OpenAPI specifications at runtime. Zero manual mapping required — point it at a Liferay instance and call APIs immediately.
 
 ---
 
@@ -17,6 +17,7 @@ A production-ready JavaScript SDK that **dynamically generates** API client meth
 - [CLI Tool](#cli-tool)
 - [TypeScript](#typescript)
 - [Advanced Usage](#advanced-usage)
+- [File Structure](#file-structure)
 
 ---
 
@@ -50,9 +51,9 @@ const client = new LiferayHeadlessClient({
 // Initialize (loads and parses OpenAPI schemas)
 await client.init();
 
-// Call generated methods
-const { data: sites } = await client.headlessAdminUser.site.getMyUserAccountSitesPage();
-console.log(sites.items);
+// Call generated methods — namespace > tag > method
+const { data } = await client.headlessAdminUser.site.getMyUserAccountSitesPage();
+console.log(data.items);
 ```
 
 ---
@@ -72,17 +73,24 @@ const client = new LiferayHeadlessClient({
     '/o/object-admin/v1.0/openapi.json',
   ],
 
+  // Filter to specific operation IDs (optional)
+  operationIds: [],
+
+  // Filter to specific tags (optional)
+  tags: [],
+
   // Auth — use one of the options below
   username: 'test@liferay.com',
   password: 'test',
   // oauthToken: 'your-bearer-token',
+  // authToken: 'your-csrf-token',   // sets x-csrf-token header
 
   // HTTP behavior
   timeout: 30000,   // ms — default 30s
   retries: 2,       // automatic retries on 5xx / network errors
 
   // Lazy init via Proxy (default true)
-  // Set false if you want to call init() manually and avoid Proxy overhead
+  // When true, init() is called automatically on first service access
   autoGenerate: true,
 });
 ```
@@ -95,7 +103,6 @@ const client = new LiferayHeadlessClient({
 | Headless Admin User | `/o/headless-admin-user/v1.0/openapi.json` |
 | Headless Admin Content | `/o/headless-admin-content/v1.0/openapi.json` |
 | Object Admin | `/o/object-admin/v1.0/openapi.json` |
-| All APIs (discovery) | `/o/api` |
 
 ---
 
@@ -120,6 +127,15 @@ const client = new LiferayHeadlessClient({
 });
 ```
 
+### CSRF Token
+
+```js
+const client = new LiferayHeadlessClient({
+  baseUrl: '...',
+  authToken: 'your-csrf-token', // sets x-csrf-token header
+});
+```
+
 ### Switching Auth Dynamically
 
 ```js
@@ -137,16 +153,18 @@ client.clearAuth();
 
 ## Dynamic Method Usage
 
-After `init()`, service namespaces are accessible as properties of the client. The namespace name is derived from the OpenAPI tag (converted to camelCase).
+After `init()`, service namespaces are accessible as `client.<namespace>.<tag>.<method>()`.
+
+The namespace is derived from the OpenAPI `info.title` (camelCased). Tags become sub-namespaces.
 
 ```js
 await client.init();
 
 // GET /v1.0/sites/{siteId}
-const { data } = await client.headlessAdminUser.site.getSite({siteId: 12345});
+const { data } = await client.headlessAdminUser.site.getSite({ siteId: 12345 });
 
 // GET /v1.0/structured-contents/{structuredContentId}
-const { data: contents } = await client.headlessDelivery.structuredContent.getStructuredContent({
+const { data: content } = await client.headlessDelivery.structuredContent.getStructuredContent({
   structuredContentId: 999,
 });
 
@@ -174,7 +192,7 @@ await client.headlessDelivery.structuredContent.deleteStructuredContent({
 
 ### Parameter Mapping
 
-The SDK auto-maps parameters from the single `params` object:
+All parameters are passed as a single flat object:
 
 | Param type | How to pass |
 |------------|-------------|
@@ -183,7 +201,22 @@ The SDK auto-maps parameters from the single `params` object:
 | Request body | `{ body: { ... } }` |
 | Extra headers | `{ headers: { 'X-Custom': 'value' } }` |
 
-Any extra keys not defined in the OpenAPI spec are passed as query parameters.
+Any extra keys not defined in the OpenAPI spec fall through as query parameters.
+
+### Filtering Operations
+
+Load only what you need by filtering at construction time:
+
+```js
+const client = new LiferayHeadlessClient({
+  baseUrl: '...',
+  swaggerUrls: ['/o/headless-delivery/v1.0/openapi.json'],
+  // Only generate methods for these operation IDs
+  operationIds: ['getSite', 'getSites'],
+  // Or filter by tag name
+  tags: ['Site'],
+});
+```
 
 ### Discovering Available Methods
 
@@ -192,9 +225,13 @@ Any extra keys not defined in the OpenAPI spec are passed as query parameters.
 console.log(client.getServiceNames());
 // ['headlessDelivery', 'headlessAdminUser', ...]
 
-// List methods in a namespace
+// List tag groups within a namespace
+const ns = client._services['headlessDelivery'];
+console.log(Object.keys(ns));
+// ['structuredContent', 'site', ...]
+
+// List methods in a tag group
 console.log(client.getMethodNames('headlessDelivery'));
-// ['getSites', 'getStructuredContents', 'createStructuredContent', ...]
 ```
 
 ---
@@ -208,9 +245,7 @@ Liferay returns paginated responses with `{ items, page, pageSize, totalCount, l
 ```js
 import { iteratePages } from 'liferay-headless-sdk';
 
-await client.init();
-
-for await (const site of iteratePages(client.headlessDelivery.getSites, { pageSize: 50 })) {
+for await (const site of iteratePages(client.headlessAdminUser.site.getMyUserAccountSitesPage, { pageSize: 50 })) {
   console.log(site.name);
 }
 ```
@@ -220,7 +255,7 @@ for await (const site of iteratePages(client.headlessDelivery.getSites, { pageSi
 ```js
 import { collectAllPages } from 'liferay-headless-sdk';
 
-const allUsers = await collectAllPages(client.headlessAdminUser.getUsers, { pageSize: 100 });
+const allUsers = await collectAllPages(client.headlessAdminUser.site.getMyUserAccountSitesPage, { pageSize: 100 });
 ```
 
 ### Fetch a specific page
@@ -228,7 +263,7 @@ const allUsers = await collectAllPages(client.headlessAdminUser.getUsers, { page
 ```js
 import { getPage } from 'liferay-headless-sdk';
 
-const page2 = await getPage(client.headlessDelivery.getSites, 2, 20);
+const page2 = await getPage(client.headlessAdminUser.site.getMyUserAccountSitesPage, 2, 20);
 console.log(page2.items, page2.totalCount, page2.lastPage);
 ```
 
@@ -281,10 +316,9 @@ client.addResponseInterceptor(async (response) => {
 import { LiferayAPIError, LiferayNetworkError, LiferayTimeoutError } from 'liferay-headless-sdk';
 
 try {
-  const { data } = await client.headlessDelivery.getSites();
+  const { data } = await client.headlessAdminUser.site.getMyUserAccountSitesPage();
 } catch (err) {
   if (err instanceof LiferayAPIError) {
-    // HTTP error response from Liferay
     console.error(`API Error ${err.statusCode}: ${err.message}`);
     console.error('Endpoint:', err.endpoint);
     console.error('Response body:', err.responseBody);
@@ -306,7 +340,7 @@ try {
 | `LiferayNetworkError` | `message`, `endpoint`, `cause` |
 | `LiferayTimeoutError` | `message`, `endpoint`, `timeoutMs` |
 
-4xx errors are **not retried**. 5xx and network errors are retried up to `retries` times with exponential backoff.
+4xx errors are not retried. 5xx and network errors are retried up to `retries` times with exponential backoff.
 
 ---
 
@@ -326,7 +360,7 @@ npx liferay-sdk-cli generate \
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--baseUrl` | Liferay instance URL | *required* |
+| `--baseUrl` | Liferay instance URL | required |
 | `--output` | Output directory | `./generated-sdk` |
 | `--username` | Basic Auth username | |
 | `--password` | Basic Auth password | |
@@ -341,11 +375,13 @@ npx liferay-sdk-cli generate \
   --swagger /o/headless-delivery/v1.0/openapi.json,/o/my-custom-api/v1.0/openapi.json
 ```
 
+The CLI generates a `services/` directory with one JS file per API, plus an `index.js` that re-exports everything alongside the core SDK helpers.
+
 ---
 
 ## TypeScript
 
-Full TypeScript declarations are included. The dynamic service namespaces are typed with an index signature:
+TypeScript declarations are included via `src/index.d.ts`. Dynamic service namespaces are typed with an index signature:
 
 ```ts
 import { LiferayHeadlessClient, LiferayAPIError } from 'liferay-headless-sdk';
@@ -359,12 +395,12 @@ const client = new LiferayHeadlessClient({
 
 await client.init();
 
-// Dynamically accessed namespaces return Record<string, ApiMethod>
-const service = client['headlessDelivery'] as Record<string, Function>;
-const result = await service['getSites']();
+// Dynamically accessed namespaces
+const ns = client['headlessDelivery'] as Record<string, Record<string, Function>>;
+const result = await ns['structuredContent']['getStructuredContents']();
 ```
 
-For strongly-typed wrappers, use the CLI to generate static service modules with explicit types.
+For strongly-typed wrappers, use the CLI to generate static service modules.
 
 ---
 
@@ -375,7 +411,7 @@ For strongly-typed wrappers, use the CLI to generate static service modules with
 ```js
 const client = new LiferayHeadlessClient({
   baseUrl: '...',
-  swaggerUrls: [],         // Start with no schemas
+  swaggerUrls: [],
   autoGenerate: false,
   username: 'test@liferay.com',
   password: 'test',
@@ -383,7 +419,7 @@ const client = new LiferayHeadlessClient({
 
 // Load only what you need
 await client.loadSchema('/o/headless-delivery/v1.0/openapi.json');
-const { data } = await client.headlessDelivery.getSites();
+const { data } = await client.headlessDelivery.structuredContent.getStructuredContents();
 ```
 
 ### Raw HTTP access
@@ -409,18 +445,19 @@ await client.init();
 ## File Structure
 
 ```
-liferay-sdk/
-├── index.js          — Public exports
-├── index.d.ts        — TypeScript declarations
-├── client.js         — LiferayHeadlessClient class
-├── swagger-loader.js — OpenAPI schema fetching & caching
-├── api-generator.js  — Dynamic method generation from schemas
-├── http.js           — HTTP transport (fetch, retry, timeout)
-├── auth.js           — Basic Auth & OAuth2 manager
-├── errors.js         — LiferayAPIError, LiferayNetworkError, LiferayTimeoutError
-├── pagination.js     — iteratePages, collectAllPages, getPage
-├── utils.js          — URL building, camelCase conversion, etc.
-├── cli.js            — liferay-sdk-cli tool
+liferay-headless-sdk/
+├── src/
+│   ├── index.js          — Public exports
+│   ├── index.d.ts        — TypeScript declarations
+│   ├── client.js         — LiferayHeadlessClient (main entry point)
+│   ├── api-generator.js  — Parses OpenAPI schemas, generates service modules
+│   ├── swagger-loader.js — Fetches and caches OpenAPI JSON schemas
+│   ├── http.js           — Fetch wrapper with retry, timeout, interceptors
+│   ├── auth.js           — Basic Auth, OAuth2, and CSRF token management
+│   ├── errors.js         — LiferayAPIError, LiferayNetworkError, LiferayTimeoutError
+│   ├── pagination.js     — iteratePages, collectAllPages, getPage
+│   ├── utils.js          — URL building, camelCase, query string helpers
+│   └── cli.js            — liferay-sdk-cli binary
 ├── package.json
 └── README.md
 ```

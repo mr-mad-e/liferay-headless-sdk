@@ -15,7 +15,7 @@ const BODY_METHODS = new Set(['post', 'put', 'patch']);
  * @param {object} schema - Parsed OpenAPI/Swagger JSON
  * @returns {Map<string, Array<OperationDef>>} Tag → list of operation definitions
  */
-export function parseOperationsByTag(schema) {
+export function parseOperationsByTag(schema, operationIds, _tags) {
   const tagMap = new Map();
   const paths = schema.paths || {};
   const url = schema.servers[0].url;
@@ -24,12 +24,13 @@ export function parseOperationsByTag(schema) {
     for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
       const operation = pathItem[method];
       if (!operation) continue;
+      if (operationIds.length && !operationIds.includes(operation.operationId)) continue;
 
-      const tags = (operation.tags && operation.tags.length > 0)
-        ? operation.tags
-        : ['default'];
+      const tags = operation.tags && operation.tags.length > 0 ? operation.tags : ['default'];
 
       const primaryTag = tags[0];
+      if (_tags.length && !_tags.includes(primaryTag)) continue;
+
       const tagKey = tagToPropertyName(primaryTag);
 
       if (!tagMap.has(tagKey)) {
@@ -80,14 +81,10 @@ export function buildOperationMethod(operation, httpClient) {
   const { url, method, pathTemplate, operationId, parameters } = operation;
 
   // Identify path parameter names
-  const pathParamNames = new Set(
-    parameters.filter((p) => p.in === 'path').map((p) => p.name)
-  );
+  const pathParamNames = new Set(parameters.filter((p) => p.in === 'path').map((p) => p.name));
 
   // Identify query parameter names
-  const queryParamNames = new Set(
-    parameters.filter((p) => p.in === 'query').map((p) => p.name)
-  );
+  const queryParamNames = new Set(parameters.filter((p) => p.in === 'query').map((p) => p.name));
 
   /**
    * Dynamically generated API method.
@@ -157,7 +154,9 @@ export function buildServiceModule(operations, httpClient) {
   for (const operation of operations) {
     const methodName = operationIdToMethodName(operation.operationId);
     if (!methodName) {
-      console.warn(`[LiferaySDK] Skipping operation with no operationId at ${operation.method.toUpperCase()} ${operation.pathTemplate}`);
+      console.warn(
+        `[LiferaySDK] Skipping operation with no operationId at ${operation.method.toUpperCase()} ${operation.pathTemplate}`,
+      );
       continue;
     }
     if (module[methodName]) {
@@ -179,10 +178,10 @@ export function buildServiceModule(operations, httpClient) {
  * @param {import('./http.js').HttpClient} httpClient
  * @returns {Record<string, Record<string, Function>>} Tag → service module
  */
-export function generateServicesFromSchema(schema, httpClient) {
-  const tagMap = parseOperationsByTag(schema);
+export function generateServicesFromSchema(schema, operationIds, tags, httpClient) {
+  const tagMap = parseOperationsByTag(schema, operationIds, tags);
   const service = tagToPropertyName(schema.info.title);
-  const services = {[service]:{}};
+  const services = { [service]: {} };
 
   for (const [tagKey, operations] of tagMap.entries()) {
     services[service][tagKey] = buildServiceModule(operations, httpClient);
