@@ -76,8 +76,11 @@ export class SwaggerLoader {
 
     // 3. Network fetch
     const schema = await this._fetchSchema(absoluteUrl, authHeaders);
-    this._memoryCache.set(key, schema);
-    this._writeToLocalStorage(key, schema);
+    if (schema) {
+      this._memoryCache.set(key, schema);
+      this._writeToLocalStorage(key, schema);
+    }
+
     return schema;
   }
 
@@ -100,8 +103,10 @@ export class SwaggerLoader {
     const schemas = [];
     for (const url of schemaUrls) {
       // if (result.status === 'fulfilled') {
-        const schema = await this.load(url, baseUrl, authHeaders)
-        schemas.push({schema, url});
+      const schema = await this.load(url, baseUrl, authHeaders);
+      if (schema) {
+        schemas.push({ schema, url });
+      }
       // } else {
       //   console.warn(`[LiferaySDK] Failed to load schema: ${result.reason?.message}`);
       // }
@@ -141,14 +146,14 @@ export class SwaggerLoader {
     const response = await fetch(url, { headers });
 
     if (!response.ok) {
-      throw new Error(
-        `Failed to fetch OpenAPI schema from ${url}: HTTP ${response.status} ${response.statusText}`
-      );
+      console.log(`Failed to fetch OpenAPI schema from ${url}: HTTP ${response.status} ${response.statusText}`)
+      // throw new Error(`Failed to fetch OpenAPI schema from ${url}: HTTP ${response.status} ${response.statusText}`);
     }
 
     const contentType = response.headers.get('content-type') || '';
-    if (!contentType.includes('application/json') && !contentType.includes('text/')) {
-      throw new Error(`Unexpected content-type "${contentType}" from ${url}`);
+    if (!contentType.includes('application/json')) {
+      console.log(`Unexpected content-type "${contentType}" from ${url}`)
+      // throw new Error(`Unexpected content-type "${contentType}" from ${url}`);
     }
 
     return response.json();
