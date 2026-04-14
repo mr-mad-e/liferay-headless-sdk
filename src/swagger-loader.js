@@ -147,12 +147,14 @@ export class SwaggerLoader {
 
     if (!response.ok) {
       console.log(`Failed to fetch OpenAPI schema from ${url}: HTTP ${response.status} ${response.statusText}`)
+      return;
       // throw new Error(`Failed to fetch OpenAPI schema from ${url}: HTTP ${response.status} ${response.statusText}`);
     }
 
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
       console.log(`Unexpected content-type "${contentType}" from ${url}`)
+      return;
       // throw new Error(`Unexpected content-type "${contentType}" from ${url}`);
     }
 
