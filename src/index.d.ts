@@ -1,14 +1,17 @@
 /**
- * TypeScript declarations for the Liferay Headless SDK.
+ * TypeScript declarations for the Liferay Headless SDK (refactored version)
  */
 
-// ─── Error Classes ─────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Errors
+// ─────────────────────────────────────────────────────────────────────────────
 
 export declare class LiferayAPIError extends Error {
   statusCode: number;
   endpoint: string;
   requestPayload: unknown | null;
   responseBody: unknown | null;
+
   constructor(options: {
     statusCode: number;
     message: string;
@@ -21,30 +24,40 @@ export declare class LiferayAPIError extends Error {
 export declare class LiferayNetworkError extends Error {
   endpoint: string;
   cause: Error | null;
+
   constructor(message: string, endpoint: string, cause?: Error | null);
 }
 
 export declare class LiferayTimeoutError extends Error {
   endpoint: string;
   timeoutMs: number;
+
   constructor(endpoint: string, timeoutMs: number);
 }
 
-// ─── Auth ──────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth
+// ─────────────────────────────────────────────────────────────────────────────
 
 export type AuthType = 'basic' | 'oauth';
 
 export declare class AuthManager {
   setBasicAuth(username: string, password: string): void;
+
   setOAuthToken(token: string): void;
-  setAuthToken(authToken: string): void;
+
   clearAuth(): void;
+
   getAuthHeader(): string | null;
+
   getAuthType(): AuthType | null;
-  injectAuthHeaders(headers: Record<string, string>): Record<string, string>;
+
+  injectAuthHeaders(headers: Record<string, string>): Promise<Record<string, string>>;
 }
 
-// ─── HTTP ──────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface HttpRequestConfig {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -61,32 +74,65 @@ export interface HttpResponse<T = unknown> {
 }
 
 export declare class HttpClient {
-  constructor(options: {
-    baseUrl: string;
-    timeout?: number;
-    retries?: number;
-    auth: AuthManager;
-  });
+  constructor(options: { baseUrl: string; timeout?: number; retries?: number; auth: AuthManager });
+
   addRequestInterceptor(fn: (config: HttpRequestConfig) => HttpRequestConfig | Promise<HttpRequestConfig>): void;
+
   addResponseInterceptor(fn: (response: HttpResponse) => HttpResponse | Promise<HttpResponse>): void;
+
   request<T = unknown>(config: HttpRequestConfig): Promise<HttpResponse<T>>;
-  get<T = unknown>(path: string, query?: Record<string, unknown>, headers?: Record<string, string>): Promise<HttpResponse<T>>;
-  post<T = unknown>(path: string, body?: unknown, query?: Record<string, unknown>, headers?: Record<string, string>): Promise<HttpResponse<T>>;
-  put<T = unknown>(path: string, body?: unknown, query?: Record<string, unknown>, headers?: Record<string, string>): Promise<HttpResponse<T>>;
-  patch<T = unknown>(path: string, body?: unknown, query?: Record<string, unknown>, headers?: Record<string, string>): Promise<HttpResponse<T>>;
-  delete<T = unknown>(path: string, query?: Record<string, unknown>, headers?: Record<string, string>): Promise<HttpResponse<T>>;
+
+  get<T = unknown>(
+    path: string,
+    query?: Record<string, unknown>,
+    headers?: Record<string, string>,
+  ): Promise<HttpResponse<T>>;
+
+  post<T = unknown>(
+    path: string,
+    body?: unknown,
+    query?: Record<string, unknown>,
+    headers?: Record<string, string>,
+  ): Promise<HttpResponse<T>>;
+
+  put<T = unknown>(
+    path: string,
+    body?: unknown,
+    query?: Record<string, unknown>,
+    headers?: Record<string, string>,
+  ): Promise<HttpResponse<T>>;
+
+  patch<T = unknown>(
+    path: string,
+    body?: unknown,
+    query?: Record<string, unknown>,
+    headers?: Record<string, string>,
+  ): Promise<HttpResponse<T>>;
+
+  delete<T = unknown>(
+    path: string,
+    query?: Record<string, unknown>,
+    headers?: Record<string, string>,
+  ): Promise<HttpResponse<T>>;
 }
 
-// ─── Swagger Loader ────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Swagger Loader (UPDATED)
+// ─────────────────────────────────────────────────────────────────────────────
 
 export declare class SwaggerLoader {
-  load(schemaUrl: string, baseUrl?: string, authHeaders?: Record<string, string>): Promise<object>;
-  loadAll(schemaUrls: string[], baseUrl: string, authHeaders?: Record<string, string>): Promise<Array<{ url: string; schema: object }>>;
+  load(schemaUrl: string, baseUrl?: string): Promise<object>;
+
+  loadAll(schemaUrls: string[], baseUrl: string): Promise<Array<{ url: string; schema: object }>>;
+
   clearCache(): void;
+
   invalidate(absoluteUrl: string): void;
 }
 
-// ─── API Generator ─────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// API Generator
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface OperationDef {
   method: string;
@@ -101,17 +147,19 @@ export interface OperationDef {
 export declare function parseOperationsByTag(
   schema: object,
   operationIds?: string[],
-  tags?: string[]
+  tags?: string[],
 ): Map<string, OperationDef[]>;
 
 export declare function generateServicesFromSchema(
   schema: object,
   operationIds: string[],
   tags: string[],
-  httpClient: HttpClient
+  httpClient: HttpClient,
 ): Record<string, Record<string, Record<string, ApiMethod>>>;
 
-// ─── API Method ────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// API Methods
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface ApiMethodParams {
   [key: string]: unknown;
@@ -127,105 +175,82 @@ export interface PagedResponse<T = unknown> {
   lastPage: number | null;
 }
 
-export type ApiMethod<TParams extends ApiMethodParams = ApiMethodParams, TData = unknown> =
-  (params?: TParams) => Promise<HttpResponse<TData>>;
+export type ApiMethod<TParams extends ApiMethodParams = ApiMethodParams, TData = unknown> = (
+  params?: TParams,
+) => Promise<HttpResponse<TData>>;
 
-// ─── Pagination ────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Pagination
+// ─────────────────────────────────────────────────────────────────────────────
 
 export declare function iteratePages<T = unknown>(
   apiMethod: ApiMethod,
-  params?: ApiMethodParams & { pageSize?: number }
+  params?: ApiMethodParams & { pageSize?: number },
 ): AsyncGenerator<T>;
 
 export declare function collectAllPages<T = unknown>(
   apiMethod: ApiMethod,
-  params?: ApiMethodParams & { pageSize?: number }
+  params?: ApiMethodParams & { pageSize?: number },
 ): Promise<T[]>;
 
 export declare function getPage<T = unknown>(
   apiMethod: ApiMethod,
   page: number,
   pageSize?: number,
-  params?: ApiMethodParams
+  params?: ApiMethodParams,
 ): Promise<PagedResponse<T>>;
 
-// ─── Client ────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Client
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface LiferayClientOptions {
-  /** Base URL of the Liferay instance */
   baseUrl: string;
-  /** OpenAPI JSON endpoint paths or absolute URLs to load */
   swaggerUrls?: string[];
-  /** Filter generated methods to specific operation IDs */
   operationIds?: string[];
-  /** Filter generated methods to specific tag names */
   tags?: string[];
-  /** Username for Basic Auth */
+
   username?: string;
-  /** Password for Basic Auth */
   password?: string;
-  /** Bearer token for OAuth2 */
+
   oauthToken?: string;
-  /** Raw CSRF token — sets x-csrf-token header on every request */
+
   authToken?: string;
-  /** Request timeout in ms (default 30000) */
+
   timeout?: number;
-  /** Number of retry attempts on transient failures (default 2) */
   retries?: number;
-  /** Auto-load schemas on construction via Proxy (default true) */
+
   autoGenerate?: boolean;
 }
 
-/**
- * Main Liferay Headless API client.
- *
- * After `init()`, services are accessible as `client.<namespace>.<tag>.<method>()`.
- * The namespace is derived from the OpenAPI `info.title` (camelCased);
- * tags become sub-namespaces within it.
- */
 export declare class LiferayHeadlessClient {
   constructor(options: LiferayClientOptions);
 
-  /** Load all configured Swagger schemas and generate service modules. */
   init(): Promise<this>;
 
-  /** Load a single additional Swagger schema and merge its services. */
   loadSchema(swaggerUrl: string): Promise<void>;
 
-  /** Switch to Basic Auth credentials. */
   setBasicAuth(username: string, password: string): void;
 
-  /** Switch to OAuth2 Bearer token. */
   setOAuthToken(token: string): void;
 
-  /** Clear auth credentials. */
   clearAuth(): void;
 
-  /** Register a request interceptor. */
-  addRequestInterceptor(
-    fn: (config: HttpRequestConfig) => HttpRequestConfig | Promise<HttpRequestConfig>
-  ): void;
+  addRequestInterceptor(fn: (config: HttpRequestConfig) => HttpRequestConfig | Promise<HttpRequestConfig>): void;
 
-  /** Register a response interceptor. */
-  addResponseInterceptor(
-    fn: (response: HttpResponse) => HttpResponse | Promise<HttpResponse>
-  ): void;
+  addResponseInterceptor(fn: (response: HttpResponse) => HttpResponse | Promise<HttpResponse>): void;
 
-  /** Make a raw HTTP request. */
   request<T = unknown>(config: HttpRequestConfig): Promise<HttpResponse<T>>;
 
-  /** Clear all cached Swagger schemas and reset generated services. */
   clearSchemaCache(): void;
 
-  /** Returns all available top-level service namespace names. */
   getServiceNames(): string[];
 
-  /** Returns all method names for a given service namespace. */
   getMethodNames(serviceName: string): string[];
 
   /**
-   * Dynamically accessible service namespaces populated at runtime.
-   * Structure: client[namespace][tag][method]
+   * Runtime-generated service structure:
+   * client.<namespace>.<tag>.<method>
    */
   [namespace: string]: Record<string, Record<string, ApiMethod>> | unknown;
 }

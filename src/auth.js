@@ -1,89 +1,151 @@
 /**
  * @fileoverview Authentication manager for Liferay API requests.
- * Supports Basic Auth and OAuth2 Bearer tokens with dynamic switching.
+ * Supports Basic Auth and OAuth2 Client Credentials with token caching.
  */
 
-/**
- * @typedef {'basic' | 'oauth'} AuthType
- */
-
-/**
- * Manages authentication headers for the SDK.
- */
 export class AuthManager {
   constructor() {
-    /** @type {AuthType | null} */
-    this._authType = null;
-    this._authToken = null;
-    this._credentials = null;
+    this.reset();
   }
 
-  /**
-   * Configure Basic Authentication.
-   * @param {string} username
-   * @param {string} password
-   */
+  reset() {
+    this._authType = null;
+    this._authHeader = null;
+
+    // OAuth state
+    this._clientConfig = null;
+    this._tokenData = null;
+    this._tokenExpiry = null;
+
+    // Prevent concurrent refresh storms
+    this._refreshPromise = null;
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Basic Auth                                                                */
+  /* -------------------------------------------------------------------------- */
+
   setBasicAuth(username, password) {
     this._authType = 'basic';
-    const encoded =
+    this._authHeader = this._encodeBasic(username, password);
+  }
+
+  _encodeBasic(username, password) {
+    const token =
       typeof btoa !== 'undefined'
         ? btoa(`${username}:${password}`)
         : Buffer.from(`${username}:${password}`).toString('base64');
-    this._credentials = `Basic ${encoded}`;
+
+    return `Basic ${token}`;
   }
 
-  /**
-   * Configure OAuth2 Bearer token authentication.
-   * @param {string} token
-   */
+  /* -------------------------------------------------------------------------- */
+  /* OAuth (manual token)                                                      */
+  /* -------------------------------------------------------------------------- */
+
   setOAuthToken(token) {
     this._authType = 'oauth';
-    this._credentials = `Bearer ${token}`;
+    this._authHeader = `Bearer ${token}`;
   }
 
-  setAuthToken(authToken) {
-    this._authToken = authToken
+  /* -------------------------------------------------------------------------- */
+  /* OAuth Client Credentials                                                  */
+  /* -------------------------------------------------------------------------- */
+
+  async setClientCredentials(config) {
+    const { tokenUrl, clientId, clientSecret } = config;
+
+    this._authType = 'oauth';
+    this._clientConfig = { tokenUrl, clientId, clientSecret };
+
+    await this._refreshToken();
   }
 
-  /**
-   * Clear all authentication credentials.
-   */
-  clearAuth() {
-    this._authType = null;
-    this._credentials = null;
+  async ensureValidToken() {
+    if (!this._clientConfig) return;
+
+    const isExpired =
+      !this._tokenExpiry || Date.now() >= this._tokenExpiry;
+
+    if (isExpired) {
+      await this._refreshToken();
+    }
   }
 
-  /**
-   * Returns the current Authorization header value, or null if not set.
-   * @returns {string | null}
-   */
-  getAuthHeader() {
-    return this._credentials;
+  async _refreshToken() {
+    if (this._refreshPromise) return this._refreshPromise;
+
+    this._refreshPromise = this._doRefreshToken();
+
+    try {
+      await this._refreshPromise;
+    } finally {
+      this._refreshPromise = null;
+    }
   }
 
-  /**
-   * Returns the current auth type.
-   * @returns {AuthType | null}
-   */
+  async _doRefreshToken() {
+    const { tokenUrl, clientId, clientSecret } = this._clientConfig;
+
+    const body = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: clientId,
+      client_secret: clientSecret,
+    });
+
+    const response = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Token request failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.access_token) {
+      throw new Error('OAuth response missing access_token');
+    }
+
+    this._applyToken(data);
+  }
+
+  _applyToken(data) {
+    this._tokenData = data;
+
+    const expiresIn = data.expires_in ?? 3600;
+    this._tokenExpiry = Date.now() + (expiresIn - 30) * 1000;
+
+    this.setOAuthToken(data.access_token);
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Public API                                                                */
+  /* -------------------------------------------------------------------------- */
+
   getAuthType() {
     return this._authType;
   }
 
-  /**
-   * Injects auth headers into the provided headers object (mutates in place).
-   * @param {Record<string, string>} headers
-   * @returns {Record<string, string>}
-   */
-  injectAuthHeaders(headers) {
-    const authHeader = this.getAuthHeader();
-    if (authHeader) {
-      headers['Authorization'] = authHeader;
-    }
+  getAuthHeader() {
+    return this._authHeader;
+  }
 
-    if(this._authToken) {
-      headers['x-csrf-token'] = this._authToken;
+  async injectAuthHeaders(headers = {}) {
+    await this.ensureValidToken();
+
+    if (this._authHeader) {
+      headers.Authorization = this._authHeader;
     }
 
     return headers;
+  }
+
+  clearAuth() {
+    this.reset();
   }
 }

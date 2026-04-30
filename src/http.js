@@ -1,118 +1,141 @@
 /**
- * @fileoverview HTTP transport layer with retry logic, timeout, interceptors,
- * multipart/form-data, and standardized error handling.
+ * HTTP transport layer with retry, timeout, interceptors, and error normalization.
  */
 
 import { LiferayAPIError, LiferayNetworkError, LiferayTimeoutError } from './errors.js';
-import { buildQueryString, joinUrl, sleep } from './utils.js';
+import { buildQueryString, sleep } from './utils.js';
 
-/** @type {number} Default number of retry attempts for transient errors */
 const DEFAULT_RETRIES = 2;
-/** @type {number} Base delay in ms for exponential backoff */
 const RETRY_BASE_DELAY = 300;
 
-/**
- * Core HTTP client for the Liferay SDK.
- */
 export class HttpClient {
-  /**
-   * @param {object} options
-   * @param {string} options.baseUrl
-   * @param {number} [options.timeout=30000] - Request timeout in ms
-   * @param {number} [options.retries=2] - Number of retries on transient failures
-   * @param {import('./auth.js').AuthManager} options.auth
-   */
   constructor({ baseUrl, timeout = 30000, retries = DEFAULT_RETRIES, auth }) {
     this.baseUrl = baseUrl;
     this.timeout = timeout;
     this.retries = retries;
     this.auth = auth;
 
-    /** @type {Array<(config: object) => object | Promise<object>>} */
     this._requestInterceptors = [];
-    /** @type {Array<(response: object) => object | Promise<object>>} */
     this._responseInterceptors = [];
   }
 
-  /**
-   * Register a request interceptor.
-   * @param {(config: object) => object | Promise<object>} fn
-   */
+  /* -------------------------------------------------------------------------- */
+  /* Interceptors                                                              */
+  /* -------------------------------------------------------------------------- */
+
   addRequestInterceptor(fn) {
     this._requestInterceptors.push(fn);
   }
 
-  /**
-   * Register a response interceptor.
-   * @param {(response: object) => object | Promise<object>} fn
-   */
   addResponseInterceptor(fn) {
     this._responseInterceptors.push(fn);
   }
 
-  /**
-   * Execute an HTTP request.
-   *
-   * @param {object} config
-   * @param {string} config.method - HTTP method (GET, POST, PUT, PATCH, DELETE)
-   * @param {string} config.path - Path relative to baseUrl (already interpolated)
-   * @param {Record<string, *>} [config.query] - Query parameters
-   * @param {*} [config.body] - Request body (object → JSON, FormData → multipart)
-   * @param {Record<string, string>} [config.headers] - Additional headers
-   * @returns {Promise<{ status: number, data: *, headers: Headers }>}
-   */
-  async request(config) {
-    // Run request interceptors
-    let finalConfig = { ...config };
-    for (const interceptor of this._requestInterceptors) {
-      finalConfig = await interceptor(finalConfig);
+  async _runRequestInterceptors(config) {
+    let next = config;
+    for (const fn of this._requestInterceptors) {
+      next = await fn(next);
     }
+    return next;
+  }
 
-    const { method, path, query = {}, body, headers: extraHeaders = {} } = finalConfig;
+  async _runResponseInterceptors(response) {
+    let next = response;
+    for (const fn of this._responseInterceptors) {
+      next = await fn(next);
+    }
+    return next;
+  }
 
-    // Build URL
+  /* -------------------------------------------------------------------------- */
+  /* Public API                                                                */
+  /* -------------------------------------------------------------------------- */
+
+  request(config) {
+    return this._execute(config);
+  }
+
+  get(path, query, headers) {
+    return this.request({ method: 'GET', path, query, headers });
+  }
+
+  post(path, body, query, headers) {
+    return this.request({ method: 'POST', path, body, query, headers });
+  }
+
+  put(path, body, query, headers) {
+    return this.request({ method: 'PUT', path, body, query, headers });
+  }
+
+  patch(path, body, query, headers) {
+    return this.request({ method: 'PATCH', path, body, query, headers });
+  }
+
+  delete(path, query, headers) {
+    return this.request({ method: 'DELETE', path, query, headers });
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Core execution pipeline                                                   */
+  /* -------------------------------------------------------------------------- */
+
+  async _execute(config) {
+    const finalConfig = await this._runRequestInterceptors({ ...config });
+
+    const request = this._buildRequest(finalConfig);
+
+    return this._withRetries(() => this._send(request));
+  }
+
+  _buildRequest(config) {
+    const { method, path, query = {}, body, headers = {} } = config;
+
+    const url = this._buildUrl(path, query);
+    const finalHeaders = { ...headers };
+
+    const payload = this._buildBody(body, finalHeaders);
+
+    return { method, url, headers: finalHeaders, body: payload };
+  }
+
+  _buildUrl(path, query) {
     const qs = buildQueryString(query);
-    const url = qs ? `${path}?${qs}` : path;
-    // const url = joinUrl(this.baseUrl, fullPath);
+    return qs ? `${path}?${qs}` : path;
+  }
 
-    // Build headers
-    const headers = { ...extraHeaders };
-    this.auth.injectAuthHeaders(headers);
+  _buildBody(body, headers) {
+    if (body == null) return undefined;
 
-    // Determine content type and body
-    let fetchBody;
     if (body instanceof FormData) {
-      // Let fetch set content-type with boundary automatically
-      fetchBody = body;
-    } else if (body !== undefined && body !== null) {
-      headers['Content-Type'] = headers['Content-Type'] || 'application/json';
-      fetchBody = JSON.stringify(body);
+      return body;
     }
 
-    // Retry loop
+    headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+
+    return JSON.stringify(body);
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Retry layer                                                               */
+  /* -------------------------------------------------------------------------- */
+
+  async _withRetries(fn) {
     let lastError;
+
     for (let attempt = 0; attempt <= this.retries; attempt++) {
       if (attempt > 0) {
-        await sleep(RETRY_BASE_DELAY * Math.pow(2, attempt - 1));
+        await sleep(RETRY_BASE_DELAY * 2 ** (attempt - 1));
       }
+
       try {
-        const result = await this._fetchWithTimeout({ url, method, headers, body: fetchBody });
-
-        // Run response interceptors
-        let finalResult = result;
-        for (const interceptor of this._responseInterceptors) {
-          finalResult = await interceptor(finalResult);
-        }
-
-        return finalResult;
+        return await fn();
       } catch (err) {
         lastError = err;
 
-        // Don't retry on 4xx client errors
-        if (err instanceof LiferayAPIError && err.statusCode < 500) {
+        if (this._isNonRetryable(err)) {
           throw err;
         }
-        // Don't retry on timeout if we've exhausted attempts
+
         if (attempt === this.retries) {
           throw err;
         }
@@ -122,15 +145,21 @@ export class HttpClient {
     throw lastError;
   }
 
-  /**
-   * Wraps fetch with a timeout using AbortController.
-   * @private
-   */
-  async _fetchWithTimeout({ url, method, headers, body }) {
+  _isNonRetryable(err) {
+    return err instanceof LiferayAPIError && err.statusCode < 500;
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Network layer                                                             */
+  /* -------------------------------------------------------------------------- */
+
+  async _send({ method, url, headers, body }) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
 
     try {
+      await this.auth.injectAuthHeaders(headers);
+
       const response = await fetch(url, {
         method,
         headers,
@@ -140,37 +169,26 @@ export class HttpClient {
 
       clearTimeout(timer);
 
-      return await this._parseResponse(response, url);
+      const parsed = await this._parse(response, url);
+
+      return this._runResponseInterceptors(parsed);
     } catch (err) {
       clearTimeout(timer);
-
-      if (err.name === 'AbortError') {
-        throw new LiferayTimeoutError(url, this.timeout);
-      }
-      if (err instanceof LiferayAPIError || err instanceof LiferayTimeoutError) {
-        throw err;
-      }
-      throw new LiferayNetworkError(err.message || 'Network request failed', url, err);
+      throw this._normalizeError(err, url);
     }
   }
 
-  /**
-   * Parses an HTTP Response into a standardized object.
-   * @private
-   * @param {Response} response
-   * @param {string} url
-   * @returns {Promise<{ status: number, data: *, headers: Headers }>}
-   */
-  async _parseResponse(response, url) {
+  /* -------------------------------------------------------------------------- */
+  /* Response parsing                                                          */
+  /* -------------------------------------------------------------------------- */
+
+  async _parse(response, url) {
     const contentType = response.headers.get('content-type') || '';
+
     let data;
 
     try {
-      if (contentType.includes('application/json')) {
-        data = await response.json();
-      } else {
-        data = await response.text();
-      }
+      data = contentType.includes('application/json') ? await response.json() : await response.text();
     } catch {
       data = null;
     }
@@ -178,39 +196,32 @@ export class HttpClient {
     if (!response.ok) {
       throw new LiferayAPIError({
         statusCode: response.status,
-        message: (data && (data.message || data.title)) || response.statusText || 'API Error',
+        message: data?.message || data?.title || response.statusText || 'API Error',
         endpoint: url,
         responseBody: data,
       });
     }
 
-    return { status: response.status, data, headers: response.headers };
+    return {
+      status: response.status,
+      data,
+      headers: response.headers,
+    };
   }
 
-  // ─── Convenience methods ────────────────────────────────────────────────────
+  /* -------------------------------------------------------------------------- */
+  /* Error normalization                                                       */
+  /* -------------------------------------------------------------------------- */
 
-  /** @param {string} path @param {object} [query] @param {object} [headers] */
-  get(path, query, headers) {
-    return this.request({ method: 'GET', path, query, headers });
-  }
+  _normalizeError(err, url) {
+    if (err instanceof LiferayAPIError || err instanceof LiferayTimeoutError) {
+      return err;
+    }
 
-  /** @param {string} path @param {*} body @param {object} [query] @param {object} [headers] */
-  post(path, body, query, headers) {
-    return this.request({ method: 'POST', path, body, query, headers });
-  }
+    if (err.name === 'AbortError') {
+      return new LiferayTimeoutError(url, this.timeout);
+    }
 
-  /** @param {string} path @param {*} body @param {object} [query] @param {object} [headers] */
-  put(path, body, query, headers) {
-    return this.request({ method: 'PUT', path, body, query, headers });
-  }
-
-  /** @param {string} path @param {*} body @param {object} [query] @param {object} [headers] */
-  patch(path, body, query, headers) {
-    return this.request({ method: 'PATCH', path, body, query, headers });
-  }
-
-  /** @param {string} path @param {object} [query] @param {object} [headers] */
-  delete(path, query, headers) {
-    return this.request({ method: 'DELETE', path, query, headers });
+    return new LiferayNetworkError(err?.message || 'Network request failed', url, err);
   }
 }

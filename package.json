@@ -1,6 +1,6 @@
 {
   "name": "liferay-headless-sdk",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A production-ready JavaScript SDK dynamically generated from Liferay Headless API Swagger/OpenAPI specifications.",
   "type": "module",
   "main": "./src/index.js",
@@ -30,7 +30,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "echo 'No build step required for ES modules'"
+    "build": "echo 'No build step required for ES modules'",
+    "dev": "node example/index.mjs"
   },
   "keywords": [
     "liferay",

@@ -1,192 +1,193 @@
 /**
- * @fileoverview Swagger/OpenAPI schema loader with in-memory and localStorage caching.
+ * Swagger/OpenAPI schema loader with memory + persistent caching.
  */
 
 import { cacheKey, hasLocalStorage, joinUrl } from './utils.js';
 
-/** Cache version — increment to bust all cached schemas */
 const CACHE_VERSION = '1';
-const LOCAL_STORAGE_VERSION_KEY = 'liferay_sdk_cache_version';
+const CACHE_VERSION_KEY = 'liferay_sdk_cache_version';
+const CACHE_PREFIX = 'liferay_sdk_schema_';
 
-/**
- * Loads and caches OpenAPI/Swagger JSON definitions.
- */
 export class SwaggerLoader {
-  constructor() {
-    /** @type {Map<string, object>} In-memory cache keyed by URL */
+  constructor(authManager = null) {
     this._memoryCache = new Map();
-    this._initLocalStorageVersion();
+    this._authManager = authManager;
+
+    this._storageAvailable = hasLocalStorage();
+    this._syncCacheVersion();
   }
 
-  /**
-   * Bust localStorage cache if version has changed.
-   * @private
-   */
-  _initLocalStorageVersion() {
-    if (!hasLocalStorage()) return;
-    try {
-      const storedVersion = localStorage.getItem(LOCAL_STORAGE_VERSION_KEY);
-      if (storedVersion !== CACHE_VERSION) {
-        this._clearLocalStorageCache();
-        localStorage.setItem(LOCAL_STORAGE_VERSION_KEY, CACHE_VERSION);
-      }
-    } catch {
-      // Ignore storage errors
-    }
+  setAuthManager(authManager) {
+    this._authManager = authManager;
   }
 
-  /**
-   * Removes all liferay_sdk_schema_* keys from localStorage.
-   * @private
-   */
-  _clearLocalStorageCache() {
-    if (!hasLocalStorage()) return;
-    try {
-      const keys = Object.keys(localStorage).filter((k) => k.startsWith('liferay_sdk_schema_'));
-      keys.forEach((k) => localStorage.removeItem(k));
-    } catch {
-      // Ignore
-    }
+  /* -------------------------------------------------------------------------- */
+  /* Public API                                                               */
+  /* -------------------------------------------------------------------------- */
+
+  async load(schemaUrl, baseUrl = '') {
+    const url = this._resolveUrl(schemaUrl, baseUrl);
+    const key = cacheKey(url);
+
+    return this._fromMemory(key) || this._fromStorage(key) || (await this._fetchAndCache(url, key));
   }
 
-  /**
-   * Fetches a single OpenAPI schema JSON from the given URL.
-   * Uses in-memory cache first, then localStorage, then network.
-   *
-   * @param {string} schemaUrl - Absolute or relative URL
-   * @param {string} [baseUrl] - Base URL to prefix relative schemaUrl
-   * @param {Record<string, string>} [authHeaders] - Optional auth headers
-   * @returns {Promise<object>} Parsed OpenAPI schema object
-   */
-  async load(schemaUrl, baseUrl = '', authHeaders = {}) {
-    const absoluteUrl = schemaUrl.startsWith('http') ? schemaUrl : joinUrl(baseUrl, schemaUrl);
-    const key = cacheKey(absoluteUrl);
+  async loadAll(schemaUrls, baseUrl) {
+    const results = [];
 
-    // 1. In-memory cache
-    if (this._memoryCache.has(key)) {
-      return this._memoryCache.get(key);
-    }
-
-    // 2. localStorage cache
-    const fromStorage = this._readFromLocalStorage(key);
-    if (fromStorage) {
-      this._memoryCache.set(key, fromStorage);
-      return fromStorage;
-    }
-
-    // 3. Network fetch
-    const schema = await this._fetchSchema(absoluteUrl, authHeaders);
-    if (schema) {
-      this._memoryCache.set(key, schema);
-      this._writeToLocalStorage(key, schema);
-    }
-
-    return schema;
-  }
-
-  /**
-   * Loads multiple schema URLs in parallel.
-   *
-   * @param {string[]} schemaUrls
-   * @param {string} baseUrl
-   * @param {Record<string, string>} [authHeaders]
-   * @returns {Promise<Array<{ url: string, schema: object }>>}
-   */
-  async loadAll(schemaUrls, baseUrl, authHeaders = {}) {
-    // const results = await Promise.allSettled(
-    //   schemaUrls.map(async (url) => ({
-    //     url,
-    //     schema: await this.load(url, baseUrl, authHeaders),
-    //   }))
-    // );
-
-    const schemas = [];
     for (const url of schemaUrls) {
-      // if (result.status === 'fulfilled') {
-      const schema = await this.load(url, baseUrl, authHeaders);
+      const schema = await this.load(url, baseUrl);
       if (schema) {
-        schemas.push({ schema, url });
+        results.push({ url, schema });
       }
-      // } else {
-      //   console.warn(`[LiferaySDK] Failed to load schema: ${result.reason?.message}`);
-      // }
     }
-    return schemas;
+
+    return results;
   }
 
-  /**
-   * Clears both in-memory and localStorage caches.
-   */
   clearCache() {
     this._memoryCache.clear();
-    this._clearLocalStorageCache();
+    this._clearStorage();
   }
 
-  /**
-   * Invalidate cache for a single URL.
-   * @param {string} absoluteUrl
-   */
   invalidate(absoluteUrl) {
     const key = cacheKey(absoluteUrl);
+
     this._memoryCache.delete(key);
-    if (hasLocalStorage()) {
-      try {
-        localStorage.removeItem(key);
-      } catch {
-        // Ignore
-      }
-    }
+    this._removeFromStorage(key);
   }
 
-  /**
-   * @private
-   */
-  async _fetchSchema(url, authHeaders) {
-    const headers = { Accept: 'application/json', ...authHeaders };
-    const response = await fetch(url, { headers });
+  /* -------------------------------------------------------------------------- */
+  /* URL resolution                                                           */
+  /* -------------------------------------------------------------------------- */
 
-    if (!response.ok) {
-      console.log(`Failed to fetch OpenAPI schema from ${url}: HTTP ${response.status} ${response.statusText}`)
-      return;
-      // throw new Error(`Failed to fetch OpenAPI schema from ${url}: HTTP ${response.status} ${response.statusText}`);
-    }
-
-    const contentType = response.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      console.log(`Unexpected content-type "${contentType}" from ${url}`)
-      return;
-      // throw new Error(`Unexpected content-type "${contentType}" from ${url}`);
-    }
-
-    return response.json();
+  _resolveUrl(schemaUrl, baseUrl) {
+    return schemaUrl.startsWith('http') ? schemaUrl : joinUrl(baseUrl, schemaUrl);
   }
 
-  /**
-   * @private
-   * @param {string} key
-   * @returns {object | null}
-   */
-  _readFromLocalStorage(key) {
-    if (!hasLocalStorage()) return null;
+  /* -------------------------------------------------------------------------- */
+  /* Memory cache                                                            */
+  /* -------------------------------------------------------------------------- */
+
+  _fromMemory(key) {
+    return this._memoryCache.get(key) || null;
+  }
+
+  _setMemory(key, value) {
+    this._memoryCache.set(key, value);
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Local storage cache                                                     */
+  /* -------------------------------------------------------------------------- */
+
+  _fromStorage(key) {
+    if (!this._storageAvailable) return null;
+
     try {
       const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : null;
+      if (!raw) return null;
+
+      const parsed = JSON.parse(raw);
+      this._setMemory(key, parsed);
+
+      return parsed;
     } catch {
       return null;
     }
   }
 
-  /**
-   * @private
-   * @param {string} key
-   * @param {object} schema
-   */
-  _writeToLocalStorage(key, schema) {
-    if (!hasLocalStorage()) return;
+  _setStorage(key, value) {
+    if (!this._storageAvailable) return;
+
     try {
-      localStorage.setItem(key, JSON.stringify(schema));
+      localStorage.setItem(key, JSON.stringify(value));
     } catch {
-      // Ignore quota errors
+      // ignore quota / serialization errors
     }
+  }
+
+  _removeFromStorage(key) {
+    if (!this._storageAvailable) return;
+
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+  }
+
+  _clearStorage() {
+    if (!this._storageAvailable) return;
+
+    try {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith(CACHE_PREFIX))
+        .forEach((k) => localStorage.removeItem(k));
+    } catch {}
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Fetch + persistence                                                      */
+  /* -------------------------------------------------------------------------- */
+
+  async _fetchAndCache(url, key) {
+    const schema = await this._fetch(url);
+
+    if (!schema) return null;
+
+    this._setMemory(key, schema);
+    this._setStorage(key, schema);
+
+    return schema;
+  }
+
+  async _fetch(url) {
+    const headers = await this._buildHeaders();
+
+    try {
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        console.log(`Failed to fetch schema (${response.status}): ${url}`);
+        return;
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+
+      if (!contentType.includes('application/json')) {
+        console.log(`Invalid content-type "${contentType}" from ${url}`);
+        return;
+      }
+
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async _buildHeaders() {
+    let headers = { Accept: 'application/json' };
+
+    if (this._authManager) {
+      headers = await this._authManager.injectAuthHeaders(headers);
+    }
+
+    return headers;
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Cache versioning                                                         */
+  /* -------------------------------------------------------------------------- */
+
+  _syncCacheVersion() {
+    if (!this._storageAvailable) return;
+
+    try {
+      const stored = localStorage.getItem(CACHE_VERSION_KEY);
+
+      if (stored !== CACHE_VERSION) {
+        this._clearStorage();
+        localStorage.setItem(CACHE_VERSION_KEY, CACHE_VERSION);
+      }
+    } catch {}
   }
 }

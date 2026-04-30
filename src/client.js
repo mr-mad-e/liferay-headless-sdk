@@ -1,44 +1,13 @@
 /**
- * @fileoverview Main entry point for the Liferay Headless SDK client.
- * Orchestrates auth, HTTP transport, schema loading, and dynamic API generation.
+ * Main Liferay Headless API client.
  */
 
 import { AuthManager } from './auth.js';
 import { HttpClient } from './http.js';
 import { SwaggerLoader } from './swagger-loader.js';
 import { generateServicesFromSchema } from './api-generator.js';
-import { tagToPropertyName } from './utils.js';
 
-/**
- * @typedef {object} LiferayClientOptions
- * @property {string} baseUrl - Base URL of the Liferay instance (e.g. "https://liferay.example.com")
- * @property {string[]} [swaggerUrls] - List of OpenAPI JSON endpoint paths or URLs
- * @property {string} [username] - Username for Basic Auth
- * @property {string} [password] - Password for Basic Auth
- * @property {string} [oauthToken] - Bearer token for OAuth2
- * @property {number} [timeout=30000] - Request timeout in milliseconds
- * @property {number} [retries=2] - Number of automatic retries on transient errors
- * @property {boolean} [autoGenerate=true] - If true, load and generate APIs on construction
- */
-
-/**
- * Main Liferay Headless API client.
- *
- * @example
- * const client = new LiferayHeadlessClient({
- *   baseUrl: "https://your-liferay.com",
- *   swaggerUrls: ["/o/headless-delivery/v1.0/openapi.json"],
- *   username: "test@liferay.com",
- *   password: "test",
- * });
- * await client.init();
- *
- * const sites = await client.headlessDelivery.getSites();
- */
 export class LiferayHeadlessClient {
-  /**
-   * @param {LiferayClientOptions} options
-   */
   constructor(options = {}) {
     const {
       baseUrl = '',
@@ -47,14 +16,12 @@ export class LiferayHeadlessClient {
       tags = [],
       username,
       password,
-      oauthToken,
-      authToken,
+      clientId,
+      clientSecret,
       timeout = 30000,
       retries = 2,
       autoGenerate = true,
     } = options;
-
-    // if (!baseUrl) throw new Error('[LiferaySDK] baseUrl is required');
 
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this._swaggerUrls = swaggerUrls;
@@ -62,213 +29,201 @@ export class LiferayHeadlessClient {
     this._tags = tags;
     this._autoGenerate = autoGenerate;
 
-    // Sub-modules
-    this._auth = new AuthManager();
-    this._http = new HttpClient({ baseUrl: this.baseUrl, timeout, retries, auth: this._auth });
-    this._loader = new SwaggerLoader();
-
-    /** @type {Record<string, Record<string, Function>>} Dynamically populated service modules */
-    this._services = {};
-
-    /** @type {boolean} Whether init() has been called */
     this._initialized = false;
+    this._initPromise = null;
 
-    // Configure auth
-    if (oauthToken) {
-      this._auth.setOAuthToken(oauthToken);
-    } else if (username && password) {
-      this._auth.setBasicAuth(username, password);
-    } else if (authToken) {
-      this._auth.setAuthToken(authToken);
-    }
+    this._services = Object.create(null);
 
-    // Auto-generate: return a Proxy that lazily triggers init on first service access
+    // Core modules
+    this._auth = new AuthManager();
+    this._http = new HttpClient({
+      baseUrl: this.baseUrl,
+      timeout,
+      retries,
+      auth: this._auth,
+    });
+
+    this._loader = new SwaggerLoader(this._auth);
+
+    this._configureAuth({ username, password, clientId, clientSecret });
+
     if (autoGenerate) {
-      return this._proxied();
+      return this._createLazyProxy();
     }
   }
 
-  /**
-   * Load all configured Swagger schemas and generate service modules.
-   * Must be called before using dynamically generated methods (unless autoGenerate=false).
-   *
-   * @returns {Promise<LiferayHeadlessClient>} this, for chaining
-   */
+  /* -------------------------------------------------------------------------- */
+  /* Init                                                                       */
+  /* -------------------------------------------------------------------------- */
+
   async init() {
     if (this._initialized) return this;
 
-    const authHeaders = {};
-    this._auth.injectAuthHeaders(authHeaders);
-    
-    const schemas = await this._loader.loadAll(this._swaggerUrls, this.baseUrl, authHeaders);
-
-    for (const { url, schema } of schemas) {
-      this._mergeServices(generateServicesFromSchema(schema, this._operationIds, this._tags, this._http), url);
+    if (!this._initPromise) {
+      this._initPromise = this._doInit();
     }
 
-    this._initialized = true;
+    await this._initPromise;
     return this;
   }
 
-  /**
-   * Load a single additional Swagger URL and merge its services into the client.
-   *
-   * @param {string} swaggerUrl
-   * @returns {Promise<void>}
-   */
-  async loadSchema(swaggerUrl) {
-    const authHeaders = {};
-    this._auth.injectAuthHeaders(authHeaders);
+  async _doInit() {
+    const schemas = await this._loader.loadAll(this._swaggerUrls, this.baseUrl);
 
-    const schema = await this._loader.load(swaggerUrl, this.baseUrl, authHeaders);
-    this._mergeServices(generateServicesFromSchema(schema, this._operationIds, this._tags, this._http), swaggerUrl);
+    for (const { url, schema } of schemas) {
+      const services = generateServicesFromSchema(schema, this._operationIds, this._tags, this._http);
+
+      this._mergeServices(services, url);
+    }
+
+    this._initialized = true;
+    this._initPromise = null;
   }
 
-  // ─── Auth ──────────────────────────────────────────────────────────────────
+  /* -------------------------------------------------------------------------- */
+  /* Auth                                                                      */
+  /* -------------------------------------------------------------------------- */
 
-  /**
-   * Switch to Basic Authentication.
-   * @param {string} username
-   * @param {string} password
-   */
+  _configureAuth({ username, password, clientId, clientSecret }) {
+    if (clientId && clientSecret) {
+      this.setClientCredentials(clientId, clientSecret);
+    } else if (username && password) {
+      this.setBasicAuth(username, password);
+    }
+  }
+
   setBasicAuth(username, password) {
     this._auth.setBasicAuth(username, password);
   }
 
-  /**
-   * Switch to OAuth2 Bearer token.
-   * @param {string} token
-   */
-  setOAuthToken(token) {
-    this._auth.setOAuthToken(token);
+  setClientCredentials(clientId, clientSecret) {
+    this._auth.setClientCredentials({
+      tokenUrl: `${this.baseUrl}/o/oauth2/token`,
+      clientId,
+      clientSecret,
+    });
   }
 
-  /** Clear all auth credentials. */
   clearAuth() {
     this._auth.clearAuth();
   }
 
-  // ─── Interceptors ──────────────────────────────────────────────────────────
+  /* -------------------------------------------------------------------------- */
+  /* Schema loading                                                            */
+  /* -------------------------------------------------------------------------- */
 
-  /**
-   * Add a request interceptor. Receives and must return the request config object.
-   * @param {(config: object) => object | Promise<object>} fn
-   */
-  addRequestInterceptor(fn) {
-    this._http.addRequestInterceptor(fn);
+  async loadSchema(swaggerUrl) {
+    const schema = await this._loader.load(swaggerUrl, this.baseUrl);
+
+    const services = generateServicesFromSchema(schema, this._operationIds, this._tags, this._http);
+
+    this._mergeServices(services, swaggerUrl);
   }
 
-  /**
-   * Add a response interceptor. Receives and must return the response object.
-   * @param {(response: object) => object | Promise<object>} fn
-   */
-  addResponseInterceptor(fn) {
-    this._http.addResponseInterceptor(fn);
-  }
-
-  // ─── Raw HTTP ──────────────────────────────────────────────────────────────
-
-  /**
-   * Make a raw HTTP request bypassing generated methods.
-   * @param {object} config
-   * @returns {Promise<{ status: number, data: * }>}
-   */
-  request(config) {
-    return this._http.request(config);
-  }
-
-  // ─── Cache ─────────────────────────────────────────────────────────────────
-
-  /** Clear all cached Swagger schemas. */
   clearSchemaCache() {
     this._loader.clearCache();
     this._initialized = false;
-    this._services = {};
+    this._services = Object.create(null);
   }
 
-  // ─── Internals ─────────────────────────────────────────────────────────────
+  /* -------------------------------------------------------------------------- */
+  /* Service registry                                                         */
+  /* -------------------------------------------------------------------------- */
 
-  /**
-   * Merges a generated service map into this._services.
-   * Existing methods on an existing tag are preserved; new ones are added.
-   * @private
-   */
   _mergeServices(newServices) {
     for (const [tag, methods] of Object.entries(newServices)) {
       if (!this._services[tag]) {
-        this._services[tag] = {};
+        this._services[tag] = Object.create(null);
       }
       Object.assign(this._services[tag], methods);
     }
   }
 
-  /**
-   * Returns a Proxy of this client that auto-calls init() when an unknown
-   * service property is accessed (lazy initialization).
-   * @private
-   * @returns {LiferayHeadlessClient}
-   */
-  _proxied() {
-    const self = this;
-    let initPromise = null;
-
-    return new Proxy(this, {
-      get(target, prop) {
-        // Pass through own properties and methods
-        if (prop in target) return Reflect.get(target, prop);
-
-        // Accessing a service namespace triggers lazy init
-        if (typeof prop === 'string' && !prop.startsWith('_')) {
-          if (!self._initialized) {
-            if (!initPromise) {
-              initPromise = self.init().then(() => { initPromise = null; });
-            }
-            // Return a lazy proxy for the service namespace
-            return new Proxy(
-              {},
-              {
-                get(_, methodName) {
-                  return async (...args) => {
-                    await initPromise;
-                    const service = self._services[prop];
-                    if (!service) {
-                      throw new Error(`[LiferaySDK] Service namespace "${prop}" not found. Available: ${Object.keys(self._services).join(', ')}`);
-                    }
-                    const fn = service[methodName];
-                    if (typeof fn !== 'function') {
-                      throw new Error(`[LiferaySDK] Method "${methodName}" not found in service "${prop}". Available: ${Object.keys(service).join(', ')}`);
-                    }
-                    return fn(...args);
-                  };
-                },
-              }
-            );
-          }
-
-          // Already initialized — return service directly
-          if (self._services[prop]) return self._services[prop];
-        }
-
-        return Reflect.get(target, prop);
-      },
-    });
-  }
-
-  /**
-   * Returns all available service names (tags).
-   * @returns {string[]}
-   */
   getServiceNames() {
     return Object.keys(this._services);
   }
 
-  /**
-   * Returns all method names for a given service.
-   * @param {string} serviceName
-   * @returns {string[]}
-   */
   getMethodNames(serviceName) {
-    const service = this._services[serviceName];
-    return service ? Object.keys(service) : [];
+    return Object.keys(this._services[serviceName] || {});
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* HTTP                                                                     */
+  /* -------------------------------------------------------------------------- */
+
+  request(config) {
+    return this._http.request(config);
+  }
+
+  addRequestInterceptor(fn) {
+    this._http.addRequestInterceptor(fn);
+  }
+
+  addResponseInterceptor(fn) {
+    this._http.addResponseInterceptor(fn);
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Lazy Proxy                                                               */
+  /* -------------------------------------------------------------------------- */
+
+  _createLazyProxy() {
+    return new Proxy(this, {
+      get: (target, prop, receiver) => {
+        // 1. Allow real properties/methods first
+        if (prop in target) {
+          const value = target[prop];
+          return typeof value === 'function' ? value.bind(target) : value;
+        }
+
+        // 2. Ignore private/internal props
+        if (typeof prop !== 'string' || prop.startsWith('_')) {
+          return undefined;
+        }
+
+        // 3. Otherwise treat as service path
+        return this._createServiceProxy([prop]);
+      },
+    });
+  }
+
+  _resolveServiceMethod(path, args) {
+    return this.init().then(() => {
+      let ref = this._services;
+
+      // Walk down the service tree
+      for (let i = 0; i < path.length - 1; i++) {
+        ref = ref?.[path[i]];
+      }
+
+      const methodName = path[path.length - 1];
+      const fn = ref?.[methodName];
+
+      if (typeof fn !== 'function') {
+        throw new Error(`Method "${methodName}" not found at "${path.join('.')}".`);
+      }
+
+      return fn(...args);
+    });
+  }
+
+  _createServiceProxy(path = []) {
+    const handler = {
+      get: (_, prop) => {
+        if (typeof prop !== 'string' || prop.startsWith('_')) {
+          return undefined;
+        }
+
+        // continue building chain
+        return this._createServiceProxy([...path, prop]);
+      },
+
+      apply: async (_, __, args) => {
+        return this._resolveServiceMethod(path, args);
+      },
+    };
+
+    const fn = () => {};
+    return new Proxy(fn, handler);
   }
 }
