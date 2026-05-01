@@ -3,7 +3,7 @@
  */
 
 import { LiferayAPIError, LiferayNetworkError, LiferayTimeoutError } from './errors.js';
-import { buildQueryString, sleep } from './utils.js';
+import { buildQueryString, resolveUrl, sleep } from './utils.js';
 
 const DEFAULT_RETRIES = 2;
 const RETRY_BASE_DELAY = 300;
@@ -100,7 +100,8 @@ export class HttpClient {
 
   _buildUrl(path, query) {
     const qs = buildQueryString(query);
-    return qs ? `${path}?${qs}` : path;
+    const url = resolveUrl(path, this.baseUrl);
+    return qs ? `${url}?${qs}` : url;
   }
 
   _buildBody(body, headers) {

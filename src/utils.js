@@ -94,6 +94,10 @@ export function joinUrl(base, path) {
   return `${b}${p}`;
 }
 
+export function resolveUrl(schemaUrl = '', baseUrl = '') {
+  return schemaUrl.startsWith('http') ? schemaUrl : joinUrl(baseUrl, schemaUrl);
+}
+
 /**
  * Generates a simple deterministic cache key from a URL string.
  * @param {string} url

@@ -2,7 +2,7 @@
  * Swagger/OpenAPI schema loader with memory + persistent caching.
  */
 
-import { cacheKey, hasLocalStorage, joinUrl } from './utils.js';
+import { cacheKey, hasLocalStorage, resolveUrl } from './utils.js';
 
 const CACHE_VERSION = '1';
 const CACHE_VERSION_KEY = 'liferay_sdk_cache_version';
@@ -26,7 +26,7 @@ export class SwaggerLoader {
   /* -------------------------------------------------------------------------- */
 
   async load(schemaUrl, baseUrl = '') {
-    const url = this._resolveUrl(schemaUrl, baseUrl);
+    const url = resolveUrl(schemaUrl, baseUrl);
     const key = cacheKey(url);
 
     return this._fromMemory(key) || this._fromStorage(key) || (await this._fetchAndCache(url, key));
@@ -55,14 +55,6 @@ export class SwaggerLoader {
 
     this._memoryCache.delete(key);
     this._removeFromStorage(key);
-  }
-
-  /* -------------------------------------------------------------------------- */
-  /* URL resolution                                                           */
-  /* -------------------------------------------------------------------------- */
-
-  _resolveUrl(schemaUrl, baseUrl) {
-    return schemaUrl.startsWith('http') ? schemaUrl : joinUrl(baseUrl, schemaUrl);
   }
 
   /* -------------------------------------------------------------------------- */
